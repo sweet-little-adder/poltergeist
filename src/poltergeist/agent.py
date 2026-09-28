@@ -10,11 +10,21 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .store import RunStore
+from .comparison import compare_runs
+from .docs import read_note
 
 TOOLS = [
     {"type": "function", "function": {"name": "list_backtest_runs",
      "description": "List read-only Crucibo backtest run summaries and source paths",
      "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "read_note",
+     "description": "Read the allowlisted local research note README.md, with its source",
+     "parameters": {"type": "object", "properties": {"note": {"type": "string", "enum": ["README.md"]}},
+                    "required": ["note"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "compare_runs",
+     "description": "Compare recorded return_pct between two exact backtest IDs",
+     "parameters": {"type": "object", "properties": {"left": {"type": "string"}, "right": {"type": "string"}},
+                    "required": ["left", "right"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "get_backtest_run",
      "description": "Read one backtest by exact run ID, never place an order",
      "parameters": {"type": "object", "properties": {"run_id": {"type": "string"}},
@@ -41,6 +51,10 @@ class Trace:
 
 def _offline_plan(question: str, store: RunStore) -> list[tuple[str, dict]]:
     ids = re.findall(r"\bbt_[A-Za-z0-9_-]{1,100}\b", question)
+    if re.search(r"\b(note|documentation|research notes)\b", question, re.I):
+        return [("read_note", {"note": "README.md"})]
+    if len(ids) >= 2 and re.search(r"\b(compare|difference|delta)\b", question, re.I):
+        return [("compare_runs", {"left": ids[0], "right": ids[1]})]
     if ids:
         return [("get_backtest_run", {"run_id": rid}) for rid in dict.fromkeys(ids)][:5]
     return [("list_backtest_runs", {})]
@@ -64,6 +78,10 @@ def _model_plan(question: str, model: str, api_key: str) -> tuple[list[tuple[str
         args = json.loads(f["arguments"])
         if f["name"] == "list_backtest_runs" and args == {}:
             calls.append((f["name"], args))
+        elif f["name"] == "read_note" and args == {"note": "README.md"}:
+            calls.append((f["name"], args))
+        elif f["name"] == "compare_runs" and isinstance(args, dict) and set(args) == {"left", "right"} and all(isinstance(args[k], str) for k in args):
+            calls.append((f["name"], args))
         elif f["name"] == "get_backtest_run" and isinstance(args, dict) and set(args) == {"run_id"} and isinstance(args["run_id"], str):
             calls.append((f["name"], args))
     return calls, data.get("usage", {})
@@ -83,15 +101,36 @@ def answer(question: str, store: RunStore, *, model: str | None = None,
         plan, usage = (_model_plan(question, model, api_key) if model and api_key
                        else (_offline_plan(question, store), {}))
         runs = []
+        extra = []
         for name, args in plan:
             try:
-                value = store.list_runs() if name == "list_backtest_runs" else store.get_run(**args)
+                if name == "list_backtest_runs":
+                    value = store.list_runs()
+                elif name == "get_backtest_run":
+                    value = store.get_run(**args)
+                elif name == "compare_runs":
+                    value = compare_runs(store, **args)
+                elif name == "read_note":
+                    value = read_note(store.root.parent / "docs", **args)
+                else:
+                    continue
                 calls.append({"name": name, "arguments": args, "result_count": len(value) if isinstance(value, list) else 1})
-                runs.extend(value if isinstance(value, list) else [value])
+                if name in ("list_backtest_runs", "get_backtest_run"):
+                    runs.extend(value if isinstance(value, list) else [value])
+                else:
+                    extra.append((name, value))
             except (ValueError, TypeError):
                 calls.append({"name": name, "arguments": args, "error": "invalid or missing run"})
         seen = {r["run_id"]: r for r in runs}
-        if not seen:
+        if extra:
+            lines = []
+            for name, value in extra:
+                if name == "read_note":
+                    lines.append(f"Research note (not a trading result): {value['text'].strip()} [source: {value['source']}]")
+                elif name == "compare_runs":
+                    lines.append(f"Recorded {value['metric']} difference ({value['left']} minus {value['right']}): {value['difference']} [sources: {', '.join(value['sources'])}]. This is not a forecast.")
+            result = "\n".join(lines)
+        elif not seen:
             result = "No supported Crucibo backtest runs found. Point --data-root at a Crucibo data directory containing runs/bt_*/run_manifest.json with metrics."
         else:
             lines = ["Past simulated runs (not a forecast or trading advice):"]
