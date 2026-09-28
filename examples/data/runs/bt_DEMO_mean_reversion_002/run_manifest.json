@@ -1,0 +1,1 @@
+{"run_id":"bt_DEMO_mean_reversion_002","cmd":"backtest","manifest_schema":2,"symbol":"DEMO","strategy":"mean_reversion","interval":"daily","metrics":{"return_pct":-0.12,"pnl_cash":-1200,"max_drawdown_pct":3.4,"fills_count":7}}
