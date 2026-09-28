@@ -60,3 +60,9 @@ The optional planner uses `https://api.openai.com/v1` by default; set `POLTERGEI
 ## Provenance and limits
 
 The reader follows Crucibo's persisted backtest bundle structure in [`reporting/runs.py`](https://github.com/sweet-little-adder/crucibo/blob/77eeb9b2c67b0b41b0d3c9d23f9cb8a087c67d9a/src/crucibo/reporting/runs.py) and [`reporting/bundle.py`](https://github.com/sweet-little-adder/crucibo/blob/77eeb9b2c67b0b41b0d3c9d23f9cb8a087c67d9a/src/crucibo/reporting/bundle.py). Source paths in answers are relative to `--data-root`, not verified cryptographic attestations. The app is research-only, read-only, and intentionally has **no trade execution, broker integration, recommendations, or forecast engine**.
+
+## Web demo and more read-only tools
+
+`public/index.html` is a small no-login interface for the checked-in synthetic runs. Its `/api/ask` endpoint calls the same deterministic planner and renderer as the CLI and exposes a structured trace; it never accepts an API key or broker credential. The endpoint has a 4 KB body limit and 1,000-character question limit. It does not write trace files or persist questions. The demo uses zero model tokens and makes zero model API calls.
+
+The planner also supports two extra scoped tools: `compare_runs(left, right)` computes the difference between recorded return percentages, citing both manifests; `read_note(note)` reads only the allowlisted synthetic `examples/docs/README.md` note and cites that file. These are read-only additions, not a general filesystem or web browser agent. To serve the API locally, point a local HTTP adapter at `api/index.py`; on Vercel, the included `vercel.json` routes `/` to the static UI and `/api/ask` to the Python function. Run `PYTHONPATH=src python -m pytest -q` for the expanded suite.
