@@ -69,19 +69,29 @@ The planner also supports two extra scoped tools: `compare_runs(left, right)` co
 
 ## Simulated trading demo
 
-`src/poltergeist/trading.py` is a standalone demo of execution gated by an explicit mandate. It is **not wired into the AI question-answering path**: no model or agent calls it, and the assistant above stays read-only. It demonstrates the enforcement point a future agent integration would call: proposal -> authorization -> execution.
+`src/poltergeist/trading.py` adds order execution gated by an explicit mandate. Simulated only: fixed synthetic prices (`SIMULATED_PRICES`), no broker connection, credentials, or real funds. The question-answering path stays read-only by default.
 
-- Every order goes through one `Gateway`: `authorize()` evaluates it against the mandate and returns a verdict with a decision code (`allow`, `deny_per_order_limit`, `deny_session_limit`, `deny_symbol_not_allowed`, `deny_velocity`, `deny_insufficient_cash`, `deny_insufficient_position`, `deny_invalid_request`, `deny_idempotency_conflict`). State changes only when the verdict is `allow`; there is no other intended execution path.
+- Every order goes through one `Gateway`: `authorize()` evaluates it against the mandate and returns a verdict with a decision code (`allow`, `deny_per_order_limit`, `deny_session_limit`, `deny_symbol_not_allowed`, `deny_velocity`, `deny_insufficient_cash`, `deny_insufficient_position`, `deny_invalid_request`, `deny_idempotency_conflict`). State changes only when the verdict is `allow`; there is no other intended execution path. Every decision, allowed or denied, is appended to a decision record.
 - A `Mandate` is policy as data: a per-order notional limit, a session notional limit, an allowlist of symbols, and a maximum number of executed orders.
 - Each order carries an idempotency key: a repeated key with the same order returns the recorded decision without executing again; a repeated key with a different order is rejected as a conflict. Evaluation fails closed: invalid input or a missing price is denied.
-- Every decision, allowed or denied, is appended to an in-memory decision record.
 
-Stated limits: orders are simulated against fixed synthetic prices (`SIMULATED_PRICES`), with no broker connection, credentials, or real funds. Verdicts are plain data, not signed tokens; the decision record is an in-memory list, not a durable audit log; all state resets when the process restarts, so the session and velocity caps protect a single run; there is no concurrency control. The shape follows the mandate / verdict / decision-log pattern described in Saifuro's public docs as an original minimal implementation -- a teaching demo, not a production control system and not an implementation of any vendor's product.
-
-Run it:
+Run the standalone demo:
 
 ```bash
 PYTHONPATH=src python -m poltergeist.trading
 ```
 
-The demo walks an over-limit order, a same-key retry, an allowed buy, a same-key/different-order conflict, a split order caught by the session limit, a symbol outside the mandate, and an allowed sell. Behavior tests live in `tests/test_trading.py`: allowed orders change state, denied orders change nothing, replays never execute twice, and idempotency conflicts are rejected.
+The demo walks an over-limit order, a same-key retry, an allowed buy, a same-key/different-order conflict, a split order caught by the session limit, a symbol outside the mandate, and an allowed sell. Behavior tests live in `tests/test_trading.py`.
+
+### Optional: let the assistant propose simulated orders
+
+`poltergeist --enable-trading "buy 2 DEMO"` routes a trade phrasing to a `place_simulated_order` tool whose only implementation is the mandate gateway. Off by default: without the flag the read-only refusal above is unchanged, and the web demo/API never enables it.
+
+- One proposed order per question. An exact repeat of the same question maps to the same idempotency key, so it replays the recorded decision instead of executing twice; a reworded repeat is a new order and hits the session cap.
+- State is in-memory per run unless `--portfolio PATH` is passed; then cash, positions and the decision record persist in that JSON file across runs, so the session and velocity caps keep accumulating. Deleting the file resets the session.
+- With the flag on, the word-pattern refusal for trade phrasing is skipped on purpose: the mandate, not word matching, is the enforcement boundary. The override-phrase refusal (prompt-injection patterns) still applies first.
+- With `--model`, the planner may select the tool, but its arguments are shape-validated and the model's text is still ignored; the gateway authorizes or denies. One trade call per plan.
+
+Behavior tests through the assistant path live in `tests/test_trading_agent.py`.
+
+Stated limits: verdicts are plain data, not signed tokens; the decision record is an in-memory list (optionally persisted to a JSON file you choose), not a durable audit log; there is no concurrency control, so two processes sharing one portfolio file can race; caps protect the state in the current process or file only. The shape follows the mandate / verdict / decision-log pattern described in Saifuro's public docs as an original minimal implementation: a teaching demo, not a production control system and not an implementation of any vendor's product.
