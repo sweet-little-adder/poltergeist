@@ -18,8 +18,10 @@ cannot invoke it.
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # Fixed synthetic prices for the simulation. Not market data.
 SIMULATED_PRICES: dict[str, float] = {
@@ -203,9 +205,10 @@ class Gateway:
     point is that the intended path always enforces.)
     """
 
-    def __init__(self, mandate: Mandate = DEFAULT_MANDATE, cash: float = 1000.0):
+    def __init__(self, mandate: Mandate = DEFAULT_MANDATE, cash: float = 1000.0,
+                 portfolio: Portfolio | None = None):
         self.mandate = mandate
-        self.portfolio = Portfolio(cash=cash)
+        self.portfolio = portfolio if portfolio is not None else Portfolio(cash=cash)
 
     def submit(self, order: Order) -> dict:
         return place_simulated_order(self.portfolio, order, self.mandate)
@@ -252,3 +255,40 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def portfolio_to_dict(portfolio: Portfolio) -> dict:
+    return {
+        "cash": portfolio.cash,
+        "positions": portfolio.positions,
+        "executed_notional": portfolio.executed_notional,
+        "decisions": portfolio.decisions,
+    }
+
+
+def portfolio_from_dict(data: dict) -> Portfolio:
+    decisions = list(data.get("decisions", []))
+    portfolio = Portfolio(
+        cash=float(data["cash"]),
+        positions={k: float(v) for k, v in data.get("positions", {}).items()},
+        executed_notional=float(data.get("executed_notional", 0.0)),
+        decisions=decisions,
+    )
+    portfolio._by_key = {d["idempotency_key"]: d for d in decisions if "idempotency_key" in d}
+    return portfolio
+
+
+def load_portfolio(path) -> Portfolio:
+    """Load persisted state, or a fresh 1000-cash portfolio when absent."""
+    try:
+        return portfolio_from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+    except FileNotFoundError:
+        return Portfolio(cash=1000.0)
+
+
+def save_portfolio(portfolio: Portfolio, path) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(portfolio_to_dict(portfolio), indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
