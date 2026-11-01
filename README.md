@@ -88,9 +88,10 @@ The demo walks an over-limit order, a same-key retry, an allowed buy, a same-key
 `poltergeist --enable-trading "buy 2 DEMO"` routes a trade phrasing to a `place_simulated_order` tool whose only implementation is the mandate gateway. Off by default: without the flag the read-only refusal above is unchanged, and the web demo/API never enables it.
 
 - One proposed order per question. An exact repeat of the same question maps to the same idempotency key, so it replays the recorded decision instead of executing twice; a reworded repeat is a new order and hits the session cap.
+- Question-text idempotency is a demo convenience, not production order identity: two genuinely intended, identical orders need different phrasing, or direct use of the trading module with distinct keys.
 - State is in-memory per run unless `--portfolio PATH` is passed; then cash, positions and the decision record persist in that JSON file across runs, so the session and velocity caps keep accumulating. Deleting the file resets the session.
 - With the flag on, the word-pattern refusal for trade phrasing is skipped on purpose: the mandate, not word matching, is the enforcement boundary. The override-phrase refusal (prompt-injection patterns) still applies first.
-- With `--model`, the planner may select the tool, but its arguments are shape-validated and the model's text is still ignored; the gateway authorizes or denies. One trade call per plan.
+- With `--model`, the planner may select the tool, but its arguments are shape-validated and the model's text is still ignored; the gateway authorizes or denies. One trade call per plan. (The model path is unit-tested at the validation layer; no live model call was run for this demo.)
 
 Behavior tests through the assistant path live in `tests/test_trading_agent.py`.
 
