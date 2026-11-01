@@ -59,10 +59,40 @@ The optional planner uses `https://api.openai.com/v1` by default; set `POLTERGEI
 
 ## Provenance and limits
 
-The reader follows Crucibo's persisted backtest bundle structure in [`reporting/runs.py`](https://github.com/sweet-little-adder/crucibo/blob/77eeb9b2c67b0b41b0d3c9d23f9cb8a087c67d9a/src/crucibo/reporting/runs.py) and [`reporting/bundle.py`](https://github.com/sweet-little-adder/crucibo/blob/77eeb9b2c67b0b41b0d3c9d23f9cb8a087c67d9a/src/crucibo/reporting/bundle.py). Source paths in answers are relative to `--data-root`, not verified cryptographic attestations. The app is research-only, read-only, and intentionally has **no trade execution, broker integration, recommendations, or forecast engine**.
+The reader follows Crucibo's persisted backtest bundle structure in [`reporting/runs.py`](https://github.com/sweet-little-adder/crucibo/blob/77eeb9b2c67b0b41b0d3c9d23f9cb8a087c67d9a/src/crucibo/reporting/runs.py) and [`reporting/bundle.py`](https://github.com/sweet-little-adder/crucibo/blob/77eeb9b2c67b0b41b0d3c9d23f9cb8a087c67d9a/src/crucibo/reporting/bundle.py). Source paths in answers are relative to `--data-root`, not verified cryptographic attestations. The app is research-only, read-only, and intentionally has **no trade execution, broker integration, recommendations, or forecast engine**. The simulated trading demo below is a separate teaching module and does not change this boundary.
 
 ## Web demo and more read-only tools
 
 `public/index.html` is a small no-login interface for the checked-in synthetic runs. Its `/api/ask` endpoint calls the same deterministic planner and renderer as the CLI and exposes a structured trace; it never accepts an API key or broker credential. The endpoint has a 4 KB body limit and 1,000-character question limit. It does not write trace files or persist questions. The demo uses zero model tokens and makes zero model API calls.
 
 The planner also supports two extra scoped tools: `compare_runs(left, right)` computes the difference between recorded return percentages, citing both manifests; `read_note(note)` reads only the allowlisted synthetic `examples/docs/README.md` note and cites that file. These are read-only additions, not a general filesystem or web browser agent. To serve the API locally, point a local HTTP adapter at `api/index.py`; on Vercel, the included `vercel.json` routes `/` to the static UI and `/api/ask` to the Python function. Run `PYTHONPATH=src python -m pytest -q` for the expanded suite.
+
+## Simulated trading demo
+
+`src/poltergeist/trading.py` adds order execution gated by an explicit mandate. Simulated only: fixed synthetic prices (`SIMULATED_PRICES`), no broker connection, credentials, or real funds. The question-answering path stays read-only by default.
+
+- Every order goes through one `Gateway`: `authorize()` evaluates it against the mandate and returns a verdict with a decision code (`allow`, `deny_per_order_limit`, `deny_session_limit`, `deny_symbol_not_allowed`, `deny_velocity`, `deny_insufficient_cash`, `deny_insufficient_position`, `deny_invalid_request`, `deny_idempotency_conflict`). State changes only when the verdict is `allow`; there is no other intended execution path. Every decision, allowed or denied, is appended to a decision record.
+- A `Mandate` is policy as data: a per-order notional limit, a session notional limit, an allowlist of symbols, and a maximum number of executed orders.
+- Each order carries an idempotency key: a repeated key with the same order returns the recorded decision without executing again; a repeated key with a different order is rejected as a conflict. Evaluation fails closed: invalid input or a missing price is denied.
+
+Run the standalone demo:
+
+```bash
+PYTHONPATH=src python -m poltergeist.trading
+```
+
+The demo walks an over-limit order, a same-key retry, an allowed buy, a same-key/different-order conflict, a split order caught by the session limit, a symbol outside the mandate, and an allowed sell. Behavior tests live in `tests/test_trading.py`.
+
+### Optional: let the assistant propose simulated orders
+
+`poltergeist --enable-trading "buy 2 DEMO"` routes a trade phrasing to a `place_simulated_order` tool whose only implementation is the mandate gateway. Off by default: without the flag the read-only refusal above is unchanged, and the web demo/API never enables it.
+
+- One proposed order per question. An exact repeat of the same question maps to the same idempotency key, so it replays the recorded decision instead of executing twice; a reworded repeat is a new order and hits the session cap.
+- Question-text idempotency is a demo convenience, not production order identity: two genuinely intended, identical orders need different phrasing, or direct use of the trading module with distinct keys.
+- State is in-memory per run unless `--portfolio PATH` is passed; then cash, positions and the decision record persist in that JSON file across runs, so the session and velocity caps keep accumulating. Deleting the file resets the session.
+- With the flag on, the word-pattern refusal for trade phrasing is skipped on purpose: the mandate, not word matching, is the enforcement boundary. The override-phrase refusal (prompt-injection patterns) still applies first.
+- With `--model`, the planner may select the tool, but its arguments are shape-validated and the model's text is still ignored; the gateway authorizes or denies. One trade call per plan. (The model path is unit-tested at the validation layer; no live model call was run for this demo.)
+
+Behavior tests through the assistant path live in `tests/test_trading_agent.py`.
+
+Stated limits: verdicts are plain data, not signed tokens; the decision record is an in-memory list (optionally persisted to a JSON file you choose), not a durable audit log; there is no concurrency control, so two processes sharing one portfolio file can race; caps protect the state in the current process or file only. The shape follows the mandate / verdict / decision-log pattern described in Saifuro's public docs as an original minimal implementation: a teaching demo, not a production control system and not an implementation of any vendor's product.
