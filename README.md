@@ -59,10 +59,29 @@ The optional planner uses `https://api.openai.com/v1` by default; set `POLTERGEI
 
 ## Provenance and limits
 
-The reader follows Crucibo's persisted backtest bundle structure in [`reporting/runs.py`](https://github.com/sweet-little-adder/crucibo/blob/77eeb9b2c67b0b41b0d3c9d23f9cb8a087c67d9a/src/crucibo/reporting/runs.py) and [`reporting/bundle.py`](https://github.com/sweet-little-adder/crucibo/blob/77eeb9b2c67b0b41b0d3c9d23f9cb8a087c67d9a/src/crucibo/reporting/bundle.py). Source paths in answers are relative to `--data-root`, not verified cryptographic attestations. The app is research-only, read-only, and intentionally has **no trade execution, broker integration, recommendations, or forecast engine**.
+The reader follows Crucibo's persisted backtest bundle structure in [`reporting/runs.py`](https://github.com/sweet-little-adder/crucibo/blob/77eeb9b2c67b0b41b0d3c9d23f9cb8a087c67d9a/src/crucibo/reporting/runs.py) and [`reporting/bundle.py`](https://github.com/sweet-little-adder/crucibo/blob/77eeb9b2c67b0b41b0d3c9d23f9cb8a087c67d9a/src/crucibo/reporting/bundle.py). Source paths in answers are relative to `--data-root`, not verified cryptographic attestations. The app is research-only, read-only, and intentionally has **no trade execution, broker integration, recommendations, or forecast engine**. The simulated trading demo below is a separate teaching module and does not change this boundary.
 
 ## Web demo and more read-only tools
 
 `public/index.html` is a small no-login interface for the checked-in synthetic runs. Its `/api/ask` endpoint calls the same deterministic planner and renderer as the CLI and exposes a structured trace; it never accepts an API key or broker credential. The endpoint has a 4 KB body limit and 1,000-character question limit. It does not write trace files or persist questions. The demo uses zero model tokens and makes zero model API calls.
 
 The planner also supports two extra scoped tools: `compare_runs(left, right)` computes the difference between recorded return percentages, citing both manifests; `read_note(note)` reads only the allowlisted synthetic `examples/docs/README.md` note and cites that file. These are read-only additions, not a general filesystem or web browser agent. To serve the API locally, point a local HTTP adapter at `api/index.py`; on Vercel, the included `vercel.json` routes `/` to the static UI and `/api/ask` to the Python function. Run `PYTHONPATH=src python -m pytest -q` for the expanded suite.
+
+## Simulated trading demo
+
+`src/poltergeist/trading.py` is a standalone demo of execution gated by an explicit mandate. It is **not wired into the AI question-answering path**: no model or agent calls it, and the assistant above stays read-only. It demonstrates the enforcement point a future agent integration would call: proposal -> authorization -> execution.
+
+- Every order goes through one `Gateway`: `authorize()` evaluates it against the mandate and returns a verdict with a decision code (`allow`, `deny_per_order_limit`, `deny_session_limit`, `deny_symbol_not_allowed`, `deny_velocity`, `deny_insufficient_cash`, `deny_insufficient_position`, `deny_invalid_request`, `deny_idempotency_conflict`). State changes only when the verdict is `allow`; there is no other intended execution path.
+- A `Mandate` is policy as data: a per-order notional limit, a session notional limit, an allowlist of symbols, and a maximum number of executed orders.
+- Each order carries an idempotency key: a repeated key with the same order returns the recorded decision without executing again; a repeated key with a different order is rejected as a conflict. Evaluation fails closed: invalid input or a missing price is denied.
+- Every decision, allowed or denied, is appended to an in-memory decision record.
+
+Stated limits: orders are simulated against fixed synthetic prices (`SIMULATED_PRICES`), with no broker connection, credentials, or real funds. Verdicts are plain data, not signed tokens; the decision record is an in-memory list, not a durable audit log; all state resets when the process restarts, so the session and velocity caps protect a single run; there is no concurrency control. The shape follows the mandate / verdict / decision-log pattern described in Saifuro's public docs as an original minimal implementation -- a teaching demo, not a production control system and not an implementation of any vendor's product.
+
+Run it:
+
+```bash
+PYTHONPATH=src python -m poltergeist.trading
+```
+
+The demo walks an over-limit order, a same-key retry, an allowed buy, a same-key/different-order conflict, a split order caught by the session limit, a symbol outside the mandate, and an allowed sell. Behavior tests live in `tests/test_trading.py`: allowed orders change state, denied orders change nothing, replays never execute twice, and idempotency conflicts are rejected.
